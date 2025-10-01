@@ -1,6 +1,7 @@
 // C:\MyDartProjects\pdf_tools\lib\src\compress\compress_logic.dart
 // ignore_for_file: constant_identifier_names
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
@@ -20,6 +21,12 @@ final _uuid = const Uuid();
 
 // Define um tipo para o callback de progresso
 typedef ProgressCallback = void Function(String message, int? percentage);
+
+class _SpawnedJob {
+  final Isolate iso;
+  final Future<Map<String, Object?>> result;
+  _SpawnedJob(this.iso, this.result);
+}
 
 Future<void> _compressIsolateEntry(Map<String, Object?> msg) async {
   final SendPort result = msg['result'] as SendPort;
@@ -134,44 +141,79 @@ Future<String> compressPdfFile({
   required int dpi,
   required String quality,
   required ProgressCallback onProgress,
+  int? maxCores,
+  String? outputDir,
+  bool Function()? isCancelRequested, // opcional (para Cancelar)
 }) async {
   final tmpRoot =
       Directory(p.join(Directory.systemTemp.path, 'pdf_compressor_desktop'));
   await tmpRoot.create(recursive: true);
+
   final List<String> tempFiles = [];
+  final List<_SpawnedJob> running = []; // rastrear isolates ativos (p/ cancel)
+  ReceivePort? progressPort;
+  StreamSubscription? sub;
+
+  // ignore: no_leading_underscores_for_local_identifiers
+  void _killAllRunning() {
+    for (final j in running) {
+      j.iso.kill(priority: Isolate.immediate);
+    }
+    running.clear();
+  }
 
   try {
     onProgress("Analisando PDF...", null);
     final totalPages = await getPageCountAsync(inputPath);
     if (totalPages <= 0) throw Exception("PDF inválido ou sem páginas.");
 
-    final progressPort = ReceivePort();
-    final Map<String, int> isolateProgress = {};
-    int totalPagesDone = 0;
+    progressPort = ReceivePort();
+    final isolateProgress = <String, int>{};
+    final started = DateTime.now();
 
-    final sub = progressPort.listen((msg) {
+    sub = progressPort.listen((msg) {
       if (msg is Map<String, Object?>) {
         final stage = msg['stage'] as String?;
         if (stage == 'page') {
           final isolateId = msg['isolateId'] as String;
           final pagesDoneInIsolate = msg['pagesDoneInIsolate'] as int;
           isolateProgress[isolateId] = pagesDoneInIsolate;
-          totalPagesDone =
-              isolateProgress.values.fold(0, (sum, val) => sum + val);
-          final percentage =
-              (totalPagesDone * 100 / totalPages).round().clamp(0, 100);
+
+          final totalPagesDone =
+              isolateProgress.values.fold<int>(0, (sum, v) => sum + v);
+          final pct = (totalPagesDone * 100 / totalPages).round().clamp(0, 100);
+
+          final elapsed = DateTime.now().difference(started).inSeconds;
+          final rate = elapsed > 0 ? (totalPagesDone / elapsed) : 0.0; // pág/s
+          final remaining = max(0, totalPages - totalPagesDone);
+          final etaSec = rate > 0 ? (remaining / rate).round() : 0;
+
           onProgress(
-              "Processando... $totalPagesDone / $totalPages", percentage);
+              "Processando... $totalPagesDone/$totalPages | ${rate.toStringAsFixed(1)} pág/s | ETA ${etaSec}s",
+              pct);
+        } else if (stage == 'merge-start') {
+          onProgress("Mesclando partes...", null);
+        } else if (stage == 'merge-done') {
+          onProgress("Mesclagem concluída.", null);
+        } else if (stage == 'merge-error') {
+          onProgress("Erro na mesclagem: ${msg['error']}", null);
         }
       }
     });
 
     String finalCompressedPath;
 
+    // --- Caminho 1: arquivo pequeno (sem split)
     if (totalPages < MIN_PAGES_FOR_SPLIT) {
+      if (isCancelRequested?.call() == true) {
+        _killAllRunning();
+        throw Exception('cancelled');
+      }
+
       onProgress("Processando (arquivo pequeno)...", null);
       final outPath = p.join(tmpRoot.path, '${_uuid.v4()}-compressed.pdf');
       tempFiles.add(outPath);
+
       final job = {
         'input': inputPath,
         'output': outPath,
@@ -182,25 +224,42 @@ Future<String> compressPdfFile({
         'send': progressPort.sendPort,
         'isolateId': 'main-iso',
       };
-      final result = await _runIsolate(job);
-      if ((result['rc'] as int) < 0) throw Exception(result['error']);
-      finalCompressedPath = result['finalPath'] as String;
-    } else {
-      final cpus = Platform.numberOfProcessors.clamp(2, MAX_ISOLATES_PER_PDF);
+
+      final spawned = await _spawnCompressIsolate(job);
+      running.add(spawned);
+
+      final res = await spawned.result;
+      if (isCancelRequested?.call() == true) {
+        _killAllRunning();
+        throw Exception('cancelled');
+      }
+      if ((res['rc'] as int) < 0) throw Exception(res['error']);
+      finalCompressedPath = res['finalPath'] as String;
+    }
+    // --- Caminho 2: arquivo grande (split + merge)
+    else {
+      final cpus = (maxCores ?? Platform.numberOfProcessors)
+          .clamp(1, MAX_ISOLATES_PER_PDF);
       final chunks = min(cpus, (totalPages / 2).ceil());
       final pagesPerChunk = (totalPages / chunks).ceil();
 
       onProgress("Dividindo em $chunks partes...", null);
-      final futures = <Future<Map<String, Object?>>>[];
-      final outParts = <String>[];
 
+      final outParts = <String>[];
       for (var i = 0; i < chunks; i++) {
+        if (isCancelRequested?.call() == true) {
+          _killAllRunning();
+          throw Exception('cancelled');
+        }
+
         final start = 1 + i * pagesPerChunk;
         final end = (i == chunks - 1) ? totalPages : start + pagesPerChunk - 1;
         if (start > end) break;
+
         final partPath = p.join(tmpRoot.path, '${_uuid.v4()}-part${i + 1}.pdf');
-        outParts.add(partPath);
         tempFiles.add(partPath);
+        outParts.add(partPath);
+
         final job = {
           'input': inputPath,
           'output': partPath,
@@ -211,77 +270,138 @@ Future<String> compressPdfFile({
           'send': progressPort.sendPort,
           'isolateId': 'iso${i + 1}',
         };
-        futures.add(_runIsolate(job));
+
+        final spawned = await _spawnCompressIsolate(job);
+        running.add(spawned);
       }
 
-      final results = await Future.wait(futures);
-      for (final r in results) {
-        if ((r['rc'] as int) < 0)
+      // aguarda cada chunk (permite checar cancel entre awaits)
+      for (final j in List<_SpawnedJob>.from(running)) {
+        if (isCancelRequested?.call() == true) {
+          _killAllRunning();
+          throw Exception('cancelled');
+        }
+        final r = await j.result;
+        if ((r['rc'] as int) < 0) {
+          _killAllRunning();
           throw Exception(r['error'] ?? 'Erro em um dos isolates.');
+        }
       }
 
-      onProgress("Mesclando partes...", null);
+      if (isCancelRequested?.call() == true) {
+        _killAllRunning();
+        throw Exception('cancelled');
+      }
+
       final mergedPath = p.join(tmpRoot.path, '${_uuid.v4()}-merged.pdf');
       tempFiles.add(mergedPath);
-      await _mergePdfs(outParts, mergedPath);
+
+      await _mergeInIsolate(outParts, mergedPath, progressPort.sendPort);
       finalCompressedPath = mergedPath;
     }
 
-    sub.cancel();
+    // encerra escuta de progresso
+    await sub.cancel();
     progressPort.close();
 
     onProgress("Finalizando...", 100);
-    final originalDir = p.dirname(inputPath);
+
+    final originalDir = outputDir ?? p.dirname(inputPath);
     final originalFilename = p.basenameWithoutExtension(inputPath);
     final finalOutputPath =
         p.join(originalDir, '${originalFilename}_comprimido.pdf');
-    // *** ALTERAÇÃO: Movido para dentro do Future para não bloquear a UI ***
-    await File(finalCompressedPath).rename(finalOutputPath);
+
+// Mover e limpar em outro isolate com entrypoint top-level
+    await _finalizeInIsolate(
+      src: finalCompressedPath,
+      dst: finalOutputPath,
+      temps: tempFiles,
+    );
 
     return finalOutputPath;
-  } finally {
+  } catch (e) {
+    _killAllRunning(); // garante matar em erro/cancelamento
     for (final path in tempFiles) {
       try {
         await File(path).delete();
       } catch (_) {}
     }
+    rethrow;
+  } finally {
+    await sub?.cancel();
+    progressPort?.close();
   }
 }
 
-// Funções auxiliares que você já tinha
-Future<Map<String, Object?>> _runIsolate(Map<String, Object?> job) async {
+Future<void> _finalizeInIsolate({
+  required String src,
+  required String dst,
+  required List<String> temps,
+}) async {
+  final resPort = ReceivePort();
+  await Isolate.spawn(_finalizeEntry, {
+    'src': src,
+    'dst': dst,
+    'temps': temps,
+    'result': resPort.sendPort,
+  });
+  final res = (await resPort.first as Map).cast<String, Object?>();
+  resPort.close();
+  if ((res['rc'] as int) != 0) {
+    throw Exception(res['error'] ?? 'Falha ao finalizar saída');
+  }
+}
+
+Future<void> _finalizeEntry(Map<String, Object?> m) async {
+  final send = m['result'] as SendPort;
+  final src = m['src'] as String;
+  final dst = m['dst'] as String;
+  final temps = (m['temps'] as List).cast<String>();
+  try {
+    // mover resultado
+    await File(src).rename(dst);
+    // limpar temporários
+    for (final t in temps) {
+      try {
+        await File(t).delete();
+      } catch (_) {}
+    }
+    send.send({'rc': 0});
+  } catch (e, st) {
+    send.send({'rc': -1, 'error': '$e\n$st'});
+  }
+}
+
+Future<_SpawnedJob> _spawnCompressIsolate(Map<String, Object?> job) async {
   final resultPort = ReceivePort();
-  await Isolate.spawn(
-      _compressIsolateEntry, {'result': resultPort.sendPort, 'job': job});
-  final result = await resultPort.first as Map;
-  resultPort.close();
-  return result.cast<String, Object?>();
+  final iso = await Isolate.spawn(
+    _compressIsolateEntry,
+    {'result': resultPort.sendPort, 'job': job},
+  );
+  final future = resultPort.first.then((v) {
+    resultPort.close();
+    return (v as Map).cast<String, Object?>();
+  });
+  return _SpawnedJob(iso, future);
 }
 
-Future<void> _mergePdfs(List<String> inputPaths, String outputPath) async {
-  final qpdf = qpdf_api.Qpdf.open();
-  final args = ['--empty', '--pages', ...inputPaths, '--'];
-  // NOTA: qpdf.run é síncrono, mas como toda esta lógica agora está
-  // em um Future executado fora da UI, não há problema.
-  final rc = qpdf.run(args, outputPath: outputPath);
-  if (rc != 0) throw qpdf_api.QpdfException(rc, "Falha ao mesclar PDFs");
-}
-
-Future<Map<String,Object?>> _mergeIsolateEntry(Map<String,Object?> m) async {
-  final send = m['send'] as SendPort?;
+void _mergeIsolateEntry(Map<String, Object?> m) async {
+  final progress = m['send'] as SendPort?;
+  final result = m['result'] as SendPort; // <— use este!
   final inputs = (m['inputs'] as List).cast<String>();
   final out = m['out'] as String;
+
   try {
-    send?.send({'stage':'merge-start'});
+    progress?.send({'stage': 'merge-start'});
     final qpdf = qpdf_api.Qpdf.open();
     final args = ['--empty', '--pages', ...inputs, '--'];
     final rc = qpdf.run(args, outputPath: out);
     if (rc != 0) throw qpdf_api.QpdfException(rc, "Falha ao mesclar PDFs");
-    send?.send({'stage':'merge-done'});
-    return {'rc': rc};
+    progress?.send({'stage': 'merge-done'});
+    result.send({'rc': rc}); // <— envia sucesso
   } catch (e, st) {
-    send?.send({'stage':'merge-error','error': e.toString()});
-    return {'rc': -1, 'error': '$e\n$st'};
+    progress?.send({'stage': 'merge-error', 'error': e.toString()});
+    result.send({'rc': -1, 'error': '$e\n$st'}); // <— envia erro
   }
 }
 
@@ -291,15 +411,21 @@ Future<void> _mergeInIsolate(
   SendPort progress,
 ) async {
   final resPort = ReceivePort();
-  await Isolate.spawn(_mergeIsolateEntry, {
+  final iso = await Isolate.spawn(_mergeIsolateEntry, {
     'inputs': inputs,
     'out': out,
     'send': progress,
     'result': resPort.sendPort,
   });
-  final result = await resPort.first as Map;
-  if ((result['rc'] as int) != 0) {
-    throw Exception(result['error'] ?? 'Falha ao mesclar PDFs');
+
+  try {
+    final result = (await resPort.first as Map).cast<String, Object?>();
+    if ((result['rc'] as int) != 0) {
+      throw Exception(result['error'] ?? 'Falha ao mesclar PDFs');
+    }
+  } finally {
+    resPort.close();
+    iso.kill(priority: Isolate.immediate);
   }
 }
 
@@ -330,7 +456,7 @@ List<String> _gsArgs({
     if (first != null) '-dFirstPage=$first',
     if (last != null) '-dLastPage=$last',
     ...qualityArgs,
-    
+
     // --- PARÂMETROS ADICIONADOS/MODIFICADOS PARA FORÇAR A COMPRESSÃO ---
 
     // 1. Assegura que as políticas de imagem sejam aplicadas
@@ -349,12 +475,16 @@ List<String> _gsArgs({
 
     // 3. FORÇA a conversão para JPEG (a parte mais importante)
     '-sColorConversionStrategy=sRGB',
-    '-sColorImageDict.jpeg_DCTEncode=true', // Força a compressão JPEG para imagens coloridas
-    '-sGrayImageDict.jpeg_DCTEncode=true',  // Força a compressão JPEG para imagens em tons de cinza
-    '-dJPEGQ=75',                           // Qualidade JPEG (0-100, padrão é ~75)
+    // '-sColorImageDict.jpeg_DCTEncode=true', // Força a compressão JPEG para imagens coloridas
+    //  '-sGrayImageDict.jpeg_DCTEncode=true', // Força a compressão JPEG para imagens em tons de cinza
+    '-dAutoFilterColorImages=false',
+    '-dColorImageFilter=/DCTEncode',
+    '-dAutoFilterGrayImages=false',
+    '-dGrayImageFilter=/DCTEncode',
+    '-dJPEGQ=75', // Qualidade JPEG (0-100, padrão é ~75)
     '-dAntiAliasColorImages=false',
     '-dAntiAliasGrayImages=false',
-    
+
     // -----------------------------------------------------------------
 
     input,

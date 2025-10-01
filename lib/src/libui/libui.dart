@@ -62,6 +62,9 @@ class LibUI {
       _ui.uiMainStep(1);
       // Cede controle para o event loop do Dart para processar microtasks.
       await Future.delayed(Duration.zero);
+      // usar do jeito que esta em baixo é burrice trava a interface
+      // _ui.uiMainStep(0); // não bloqueia
+      // await Future.delayed(const Duration(milliseconds: 8));
     }
   }
 
@@ -97,7 +100,6 @@ class LibUI {
 }
 
 // --- Static Callback Implementation ---
-
 
 // Agora, o trampolim processa a fila de funções pendentes.
 final _queueMainPtr =
