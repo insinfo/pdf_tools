@@ -4,12 +4,12 @@ import 'package:pdf_tools/src/ghostscript.dart';
 
 void main() async {
   // 1) caminho da DLL (ajuste se estiver em outra pasta/versão)
-  final gs = Ghostscript.open('gsdll64.dll');
+  final gs = Ghostscript.open();
 
   // 2) caminhos de entrada/saída (use raw strings para UNC no Windows)
   const input = r'C:\MyDartProjects\pdf_tools\pdfs\input\14_34074_Vol 5.pdf';
   const outCompressed =
-      r'C:\MyDartProjects\pdf_tools\pdfs\input\14_34074_Vol 5_limpo_compressed.pdf';
+      r'C:\MyDartProjects\pdf_tools\pdfs\output\14_34074_Vol 5_limpo_compressed.pdf';
 
   print('Iniciando Ghostscript...');
   final rc = exportarIntervalo(gs,

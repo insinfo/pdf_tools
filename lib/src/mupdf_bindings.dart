@@ -1,6 +1,6 @@
-// C:\MyDartProjects\pdf_tools\lib\src/mupdf_bindings.dart
+// C:\MyDartProjects\pdf_tools\lib\src\mupdf_bindings.dart
 // ignore_for_file: non_constant_identifier_names, camel_case_types
-
+//https://github.com/insinfo/mupdf/tree/f34565c44afb04fa3c003954eaa7573511f40fb0/include/mupdf
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 

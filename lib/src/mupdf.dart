@@ -1,3 +1,4 @@
+//C:\MyDartProjects\pdf_tools\lib\src\mupdf.dart
 import 'dart:ffi';
 import 'dart:io' show Platform;
 import 'dart:typed_data';
@@ -5,6 +6,7 @@ import 'dart:math' show Rectangle;
 import 'package:ffi/ffi.dart';
 import 'mupdf_bindings.dart';
 
+MuPDFBindings? _maybeBindings;
 late final MuPDFBindings _bindings;
 
 class MuPDFException implements Exception {
@@ -177,6 +179,28 @@ class MuPDFDocument implements Finalizable {
     });
   }
 
+  /// Salva o documento em um novo arquivo, reescrevendo sua estrutura.
+  /// Ideal para reparar arquivos com tabelas xref corrompidas.
+  void saveDocument(String outputPath) {
+    final optionsPtr = calloc<pdf_write_options>();
+    try {
+      final options = optionsPtr.ref;
+      // Opções simples para apenas reescrever e consertar o arquivo.
+      options.do_garbage = 1; // Coleta de lixo leve
+      options.do_clean = 1; // Limpa a sintaxe
+      options.do_sanitize = 1; // Sanitiza
+
+      final cPath = outputPath.toNativeUtf8();
+      try {
+        _bindings.pdf_save_document(_ctx, _doc.cast(), cPath, optionsPtr);
+      } finally {
+        calloc.free(cPath);
+      }
+    } finally {
+      calloc.free(optionsPtr);
+    }
+  }
+
   /// Salva o documento em um novo arquivo com opções de otimização.
   ///
   /// Mapeia as opções comuns de otimização para a API do MuPDF.
@@ -236,13 +260,20 @@ class MuPDFContext implements Finalizable {
           .cast());
 
   factory MuPDFContext.initialize({String? libraryPath}) {
-    final path = libraryPath ?? _getLibraryPath();
-    _bindings = MuPDFBindings.open(path);
-    final ctx = _bindings.fz_new_context(nullptr, nullptr, 0);
+    // Inicializa bindings UMA única vez
+    if (_maybeBindings == null) {
+      final path = libraryPath ?? _getLibraryPath();
+      _maybeBindings = MuPDFBindings.open(path);
+      _bindings =
+          _maybeBindings!; // primeira (e única) atribuição do late final
+    }
+
+    // Daqui para frente só usa o que já foi aberto
+    final ctx = _maybeBindings!.fz_new_context(nullptr, nullptr, 0);
     if (ctx == nullptr) {
       throw MuPDFException('Não foi possível criar o contexto do MuPDF.');
     }
-    _bindings.fz_register_document_handlers(ctx);
+    _maybeBindings!.fz_register_document_handlers(ctx);
     return MuPDFContext._(ctx);
   }
 

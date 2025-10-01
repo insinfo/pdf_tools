@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io' show Platform; 
 
 import 'package:ffi/ffi.dart';
 
@@ -18,8 +19,32 @@ class GhostscriptException implements Exception {
 
 class Ghostscript {
   Ghostscript(this._bindings);
-  factory Ghostscript.open([String dllPath = 'gsdll64.dll']) =>
-      Ghostscript(GhostscriptBindings.open(dllPath));
+
+  // --- MUDANÇA 1: Factory atualizado ---
+  /// Carrega a biblioteca Ghostscript para a plataforma atual.
+  ///
+  /// Opcionalmente, um caminho [libraryPath] pode ser fornecido para carregar
+  /// uma biblioteca de um local específico.
+  factory Ghostscript.open([String? libraryPath]) {
+    final path = libraryPath ?? _getLibraryPath();
+    return Ghostscript(GhostscriptBindings.open(path));
+  }
+
+  // --- MUDANÇA 2: Novo método estático para obter o caminho da biblioteca ---
+  /// Retorna o nome do arquivo da biblioteca Ghostscript para o SO atual.
+  static String _getLibraryPath() {
+    if (Platform.isWindows) {
+      return 'gsdll64.dll';
+    } else if (Platform.isLinux) {
+      return 'libgs.so';
+    } else if (Platform.isMacOS) {
+      // Bônus: adicionando suporte para macOS também
+      return 'libgs.dylib';
+    } else {
+      throw UnsupportedError(
+          'Sistema operacional não suportado: ${Platform.operatingSystem}');
+    }
+  }
 
   final GhostscriptBindings _bindings;
 
@@ -55,7 +80,9 @@ class Ghostscript {
       if (rExit < 0) return _maybeThrow(rExit, throwOnError);
       return rInit;
     } finally {
-      for (final p in allocated) calloc.free(p);
+      for (final p in allocated) {
+        calloc.free(p);
+      }
       calloc.free(argv);
       final inst = instance;
       if (inst != null) _bindings.gsapi_delete_instance(inst);
@@ -131,7 +158,9 @@ class Ghostscript {
     } finally {
       _emitters.remove(handle.address);
       calloc.free(handle.cast<Int8>());
-      for (final p in allocated) calloc.free(p);
+      for (final p in allocated) {
+        calloc.free(p);
+      }
       calloc.free(argv);
       final inst = instance;
       if (inst != null) _bindings.gsapi_delete_instance(inst);
