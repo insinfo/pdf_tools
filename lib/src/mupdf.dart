@@ -21,27 +21,27 @@ final class _DropToken extends Struct {
   external Pointer<Void> obj;
 }
 
-void _dropPixmapWrapper(Pointer<Void> token) {
-  final tokenPtr = token.cast<_DropToken>();
-  _bindings.fz_drop_pixmap(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
-  calloc.free(tokenPtr);
-}
+// void _dropPixmapWrapper(Pointer<Void> token) {
+//   final tokenPtr = token.cast<_DropToken>();
+//   _bindings.fz_drop_pixmap(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
+//   calloc.free(tokenPtr);
+// }
 
-void _dropPageWrapper(Pointer<Void> token) {
-  final tokenPtr = token.cast<_DropToken>();
-  _bindings.fz_drop_page(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
-  calloc.free(tokenPtr);
-}
+// void _dropPageWrapper(Pointer<Void> token) {
+//   final tokenPtr = token.cast<_DropToken>();
+//   _bindings.fz_drop_page(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
+//   calloc.free(tokenPtr);
+// }
 
-void _dropDocumentWrapper(Pointer<Void> token) {
-  final tokenPtr = token.cast<_DropToken>();
-  _bindings.fz_drop_document(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
-  calloc.free(tokenPtr);
-}
+// void _dropDocumentWrapper(Pointer<Void> token) {
+//   final tokenPtr = token.cast<_DropToken>();
+//   _bindings.fz_drop_document(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
+//   calloc.free(tokenPtr);
+// }
 
-void _dropContextWrapper(Pointer<Void> token) {
-  _bindings.fz_drop_context(token.cast());
-}
+// void _dropContextWrapper(Pointer<Void> token) {
+//   _bindings.fz_drop_context(token.cast());
+// }
 
 class MuPDFPixmap implements Finalizable {
   final fz_context _ctx;
@@ -54,9 +54,11 @@ class MuPDFPixmap implements Finalizable {
     _finalizer.attach(this, token.cast(), detach: this);
   }
 
-  static final _finalizer = NativeFinalizer(
-      Pointer.fromFunction<Void Function(Pointer<Void>)>(_dropPixmapWrapper)
-          .cast());
+  static final _finalizer = Finalizer<Pointer<Void>>((token) {
+    final t = token.cast<_DropToken>();
+    _bindings.fz_drop_pixmap(t.ref.ctx, t.ref.obj.cast());
+    calloc.free(t);
+  });
 
   void dispose() {
     _finalizer.detach(this);
@@ -87,9 +89,11 @@ class MuPDFPage implements Finalizable {
     _finalizer.attach(this, token.cast(), detach: this);
   }
 
-  static final _finalizer = NativeFinalizer(
-      Pointer.fromFunction<Void Function(Pointer<Void>)>(_dropPageWrapper)
-          .cast());
+  static final _finalizer = Finalizer<Pointer<Void>>((token) {
+    final tokenPtr = token.cast<_DropToken>();
+    _bindings.fz_drop_page(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
+    calloc.free(tokenPtr);
+  });
 
   void dispose() {
     _finalizer.detach(this);
@@ -140,9 +144,11 @@ class MuPDFDocument implements Finalizable {
     _finalizer.attach(this, token.cast(), detach: this);
   }
 
-  static final _finalizer = NativeFinalizer(
-      Pointer.fromFunction<Void Function(Pointer<Void>)>(_dropDocumentWrapper)
-          .cast());
+  static final _finalizer = Finalizer<Pointer<Void>>((token) {
+    final tokenPtr = token.cast<_DropToken>();
+    _bindings.fz_drop_document(tokenPtr.ref.ctx, tokenPtr.ref.obj.cast());
+    calloc.free(tokenPtr);
+  });
 
   void dispose() {
     _finalizer.detach(this);
@@ -255,9 +261,9 @@ class MuPDFContext implements Finalizable {
     _finalizer.attach(this, _ctx, detach: this);
   }
 
-  static final _finalizer = NativeFinalizer(
-      Pointer.fromFunction<Void Function(Pointer<Void>)>(_dropContextWrapper)
-          .cast());
+  static final _finalizer = Finalizer<Pointer<Void>>((token) {
+    _bindings.fz_drop_context(token.cast());
+  });
 
   factory MuPDFContext.initialize({String? libraryPath}) {
     // Inicializa bindings UMA única vez

@@ -1,0 +1,219 @@
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
+import 'win32_api.dart';
+
+// HWND -> instância
+final _appsByHWND = <int, Win32App>{};
+Win32App? _pendingApp;
+
+// // Tabela global para mapear HWNDs para instâncias de Win32WindowBase
+// final Map<int, Win32WindowBase> windowMap = {};
+
+// // Função de callback global
+// int globalWindowProc(int hwnd, int uMsg, int wParam, int lParam) {
+//   final window = windowMap[hwnd];
+//   if (window != null) {
+//     return window.windowProc(hwnd, uMsg, wParam, lParam);
+//   }
+//   return defWindowProc(hwnd, uMsg, wParam, lParam);
+// }
+// verção que funcionava a renderização sem problemas 
+class Win32App {
+  final String _title;
+  final int _width, _height;
+  final void Function() _onCreate, _onPaint, _onDestroy;
+  final void Function(int, int, int) _onInput;
+
+  int _hwnd = 0;
+  bool _running = false;
+  int get hwnd => _hwnd;
+
+  Win32App({
+    required String title,
+    int width = 800,
+    int height = 600,
+    required void Function() onCreate,
+    required void Function() onPaint,
+    required void Function(int uMsg, int wParam, int lParam) onInput,
+    required void Function() onDestroy,
+  })  : _title = title,
+        _width = width,
+        _height = height,
+        _onCreate = onCreate,
+        _onPaint = onPaint,
+        _onInput = onInput,
+        _onDestroy = onDestroy;
+
+  Future<void> run() async {
+    if (_running) throw Exception('App já em execução');
+    _running = true;
+    print('[MAIN] Iniciando aplicação…');
+
+    final className = 'DartWin32AppWindowClass'.toNativeUtf16();
+    final windowName = _title.toNativeUtf16();
+    final wc = calloc<WNDCLASSEX>(), msg = calloc<MSG>();
+    NativeCallable<WndProc>? nc;
+    try {
+      final hInstance = GetModuleHandle(nullptr);
+      // TODO verificar qual opção é melhor NativeCallable ou fromFunction com statico
+      // final nc = NativeCallable<WndProcDart>.isolateLocal(windowProc,
+      //     exceptionalReturn: 0);
+      // wc.ref.lpfnWndProc = nc.nativeFunction;
+      //wc.ref.lpfnWndProc = Pointer.fromFunction<WndProcDart>(globalWindowProc, 0);
+
+      // forma certa corrigido para usar chamadas assynconas de callback FFI no dart 3
+      nc = NativeCallable<WndProc>.isolateLocal(_windowProc,
+          exceptionalReturn: 0);
+      wc.ref.lpfnWndProc = nc.nativeFunction;
+      // forma errada que ira causar "Cannot invoke native callback outside an isolate"
+     
+
+      //wc.ref.hCursor = LoadCursor(0, IDC_ARROW);
+      wc.ref.hCursor = LoadCursor(0, MAKEINTRESOURCE(IDC_ARROW));
+
+      wc.ref
+        ..cbSize = sizeOf<WNDCLASSEX>()
+        ..style = CS_HREDRAW | CS_VREDRAW
+        ..cbClsExtra = 0
+        ..cbWndExtra = 0
+        ..hInstance = hInstance
+        ..hIcon = 0
+        ..hbrBackground = GetStockObject(NULL_BRUSH) // evita flicker
+        ..lpszMenuName = nullptr
+        ..lpszClassName = className
+        ..hIconSm = 0;
+
+      if (RegisterClassEx(wc) == 0) {
+        throw Exception('RegisterClassEx falhou (GetLastError?)');
+      }
+
+      _pendingApp = this; // importante!
+
+      _hwnd = CreateWindowEx(
+        0,
+        className,
+        windowName,
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        _width,
+        _height,
+        0,
+        0,
+        hInstance,
+        nullptr,
+      );
+      if (_hwnd == 0) throw Exception('CreateWindowEx falhou');
+
+      ShowWindow(_hwnd, SW_SHOW);
+      UpdateWindow(_hwnd);
+
+      while (_running) {
+        while (PeekMessage(msg, 0, 0, 0, PM_REMOVE) != 0) {
+          if (msg.ref.message == WM_QUIT) {
+            print('[LOOP] WM_QUIT recebido.');
+            _running = false;
+            break;
+          }
+          TranslateMessage(msg);
+          DispatchMessage(msg);
+        }
+        if (!_running) break;
+
+        // pede repintura para manter frames rodando
+        InvalidateRect(_hwnd, nullptr, 0);
+        UpdateWindow(_hwnd);
+        await Future.delayed(const Duration(milliseconds: 16));
+      }
+    } catch (e, s) {
+      // se algum callback estourar, você verá aqui
+      print('[FATAL] Exceção no run(): $e\n$s');
+    } finally {
+      _appsByHWND.remove(_hwnd);
+      try {
+        nc?.close();
+      } catch (_) {}
+      malloc.free(className);
+      malloc.free(windowName);
+      calloc.free(wc);
+      calloc.free(msg);
+      print('[MAIN] Finalizado.');
+    }
+  }
+
+  void close() {
+    if (_hwnd != 0) DestroyWindow(_hwnd);
+  }
+
+  int _handleMessage(int hWnd, int uMsg, int wParam, int lParam) {
+    try {
+      switch (uMsg) {
+        case WM_CREATE:
+          print('[MSG] WM_CREATE');
+          _onCreate();
+          return 0;
+
+        case WM_CLOSE:
+          print('[MSG] WM_CLOSE');
+          DestroyWindow(hWnd);
+          return 0;
+
+        case WM_DESTROY:
+          print('[MSG] WM_DESTROY');
+          try {
+            _onDestroy();
+          } catch (e, s) {
+            print('[ON_DESTROY] $e\n$s');
+          }
+          _running = false;
+          PostQuitMessage(0);
+          return 0;
+
+        case WM_ERASEBKGND:
+          return 1;
+
+        case WM_PAINT:
+          _onPaint(); // o handler faz BeginPaint/EndPaint
+          return 0;
+
+        case WM_SIZE:
+          InvalidateRect(hWnd, nullptr, 0);
+          return 0;
+
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+        case WM_RBUTTONDOWN:
+        case WM_RBUTTONUP:
+        case WM_MBUTTONDOWN:
+        case WM_MBUTTONUP:
+        case WM_MOUSEMOVE:
+        case WM_MOUSEWHEEL:
+        case WM_KEYDOWN:
+        case WM_KEYUP:
+        case WM_CHAR:
+          _onInput(uMsg, wParam, lParam);
+          return 0;
+      }
+    } catch (e, s) {
+      print('[WNDPROC] Exceção em uMsg=0x${uMsg.toRadixString(16)}: $e\n$s');
+    }
+    return DefWindowProc(hWnd, uMsg, wParam, lParam);
+  }
+
+  static int _windowProc(int hWnd, int uMsg, int wParam, int lParam) {
+    var app = _appsByHWND[hWnd];
+    if (app == null && (uMsg == WM_NCCREATE || uMsg == WM_CREATE)) {
+      if (_pendingApp != null) {
+        _appsByHWND[hWnd] = _pendingApp!;
+        _pendingApp!._hwnd = hWnd;
+        app = _pendingApp!;
+        _pendingApp = null;
+        print('[MAP] HWND $hWnd associado.');
+      }
+    }
+    if (app != null) {
+      return app._handleMessage(hWnd, uMsg, wParam, lParam);
+    }
+    return DefWindowProc(hWnd, uMsg, wParam, lParam);
+  }
+}

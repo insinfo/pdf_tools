@@ -9,17 +9,16 @@ import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 // Importe os bindings das suas ferramentas de linha de comando
-import 'package:pdf_tools/src/ghostscript.dart' as gs_api;
+import 'package:pdf_tools/src/gs_stdio_/ghostscript.dart' as gs_api;
 import 'package:pdf_tools/src/mupdf.dart' as mupdf_api;
 import 'package:pdf_tools/src/qpdf.dart' as qpdf_api;
 
 const MIN_PAGES_FOR_SPLIT = 4;
-const MAX_ISOLATES_PER_PDF = 8;
+const MAX_ISOLATES_PER_PDF = 2;
 final _uuid = const Uuid();
 
-// --- LÓGICA DO ISOLATE (QUASE IDÊNTICA À VERSÃO WEB) ---
+// --- LÓGICA DO ISOLATE ---
 
-// Define um tipo para o callback de progresso
 typedef ProgressCallback = void Function(String message, int? percentage);
 
 class _SpawnedJob {
@@ -40,18 +39,24 @@ Future<void> _compressIsolateEntry(Map<String, Object?> msg) async {
 }
 
 Future<Map<String, Object?>> _compressIsolate(Map<String, Object?> job) async {
-  final send = job['send'] as SendPort?;
-  final input = job['input'] as String;
-  final output = job['output'] as String;
-  final firstPage = job['firstPage'] as int;
-  final lastPage = job['lastPage'] as int;
-  final dpi = job['dpi'] as int;
-  final quality = job['quality'] as String;
-  final isolateId = job['isolateId'] as String;
+  // Variável para guardar a referência do isolate filho
+  Isolate? gsIsolate;
 
+  // Extrai os dados do job fora do try/catch principal para que
+  // o 'send' e o 'isolateId' estejam disponíveis no bloco 'catch'
+  final send = job['send'] as SendPort?;
+  final isolateId = job['isolateId'] as String;
   void emit(Map<String, Object?> m) => send?.send(m);
 
   try {
+    // ---- Lógica principal de compressão ----
+    final input = job['input'] as String;
+    final output = job['output'] as String;
+    final firstPage = job['firstPage'] as int;
+    final lastPage = job['lastPage'] as int;
+    final dpi = job['dpi'] as int;
+    final quality = job['quality'] as String;
+
     emit({
       'stage': 'start',
       'isolateId': isolateId,
@@ -69,27 +74,47 @@ Future<Map<String, Object?>> _compressIsolate(Map<String, Object?> job) async {
 
     final gs = gs_api.Ghostscript.open();
     int currentPageInJob = 0;
-    final rc = gs.runWithProgress(args, (String line) {
-      print('[$isolateId] GS > $line');
-      final match = RegExp(r'^\s*Page\s+(\d+)\s*$').firstMatch(line);
-      if (match != null) {
-        final pageNum = int.parse(match.group(1)!);
-        currentPageInJob = pageNum - firstPage + 1;
-        emit({
-          'stage': 'page',
-          'pagesDoneInIsolate': currentPageInJob,
-          'isolateId': isolateId
-        });
-      }
-    });
 
-    if (rc < 0) throw gs_api.GhostscriptException(rc);
+    final rc = await gs.runWithProgressViaBridge(
+      args,
+      (String line) {
+        print('[$isolateId] GS > $line');
+        final match = RegExp(r'^\s*Page\s+(\d+)\s*$').firstMatch(line);
+        if (match != null) {
+          final pageNum = int.parse(match.group(1)!);
+          currentPageInJob = pageNum - firstPage + 1;
+          emit({
+            'stage': 'page',
+            'pagesDoneInIsolate': currentPageInJob,
+            'isolateId': isolateId
+          });
+        }
+      },
+      // Passamos a função que armazena a referência do isolate filho
+      onIsolateSpawned: (iso) {
+        gsIsolate = iso;
+      },
+    );
 
+    if (rc < 0) {
+      // Se a chamada do GS retornar um erro, lança uma exceção
+      // que será pega pelo bloco catch abaixo.
+      throw gs_api.GhostscriptException(rc);
+    }
+
+    // Retorna sucesso
     return {'rc': rc, 'finalPath': output};
   } catch (e, st) {
+    // ---- Captura de erros ----
+    // Se qualquer coisa no bloco 'try' falhar, este bloco é executado.
     print('[$isolateId] ERRO NO ISOLATE: $e\n$st');
     emit({'stage': 'error', 'error': e.toString()});
     return {'rc': -1, 'error': e.toString()};
+  } finally {
+    // ---- Limpeza final ----
+    // Este bloco SEMPRE é executado, quer a função tenha sucesso ou falhe.
+    // Nós garantimos que o isolate filho (_ghostscriptRunner) também morra.
+    gsIsolate?.kill(priority: Isolate.immediate);
   }
 }
 
@@ -132,10 +157,7 @@ Future<int> getPageCountAsync(String path) async {
   }
 }
 
-// --- FUNÇÃO PRINCIPAL DE COMPRESSÃO ---
-
-/// Comprime um arquivo PDF usando a lógica de múltiplos isolates.
-/// Retorna o caminho do arquivo de saída.
+/// FUNÇÃO PRINCIPAL DE COMPRESSÃO
 Future<String> compressPdfFile({
   required String inputPath,
   required int dpi,
@@ -143,18 +165,17 @@ Future<String> compressPdfFile({
   required ProgressCallback onProgress,
   int? maxCores,
   String? outputDir,
-  bool Function()? isCancelRequested, // opcional (para Cancelar)
+  bool Function()? isCancelRequested,
 }) async {
   final tmpRoot =
       Directory(p.join(Directory.systemTemp.path, 'pdf_compressor_desktop'));
   await tmpRoot.create(recursive: true);
 
   final List<String> tempFiles = [];
-  final List<_SpawnedJob> running = []; // rastrear isolates ativos (p/ cancel)
+  final List<_SpawnedJob> running = [];
   ReceivePort? progressPort;
   StreamSubscription? sub;
 
-  // ignore: no_leading_underscores_for_local_identifiers
   void _killAllRunning() {
     for (final j in running) {
       j.iso.kill(priority: Isolate.immediate);
@@ -170,10 +191,12 @@ Future<String> compressPdfFile({
     progressPort = ReceivePort();
     final isolateProgress = <String, int>{};
     final started = DateTime.now();
+    final lastSend = <String, int>{};
 
     sub = progressPort.listen((msg) {
       if (msg is Map<String, Object?>) {
         final stage = msg['stage'] as String?;
+
         if (stage == 'page') {
           final isolateId = msg['isolateId'] as String;
           final pagesDoneInIsolate = msg['pagesDoneInIsolate'] as int;
@@ -184,18 +207,26 @@ Future<String> compressPdfFile({
           final pct = (totalPagesDone * 100 / totalPages).round().clamp(0, 100);
 
           final elapsed = DateTime.now().difference(started).inSeconds;
-          final rate = elapsed > 0 ? (totalPagesDone / elapsed) : 0.0; // pág/s
+          final rate = elapsed > 0 ? (totalPagesDone / elapsed) : 0.0;
           final remaining = max(0, totalPages - totalPagesDone);
           final etaSec = rate > 0 ? (remaining / rate).round() : 0;
 
-          onProgress(
-              "Processando... $totalPagesDone/$totalPages | ${rate.toStringAsFixed(1)} pág/s | ETA ${etaSec}s",
-              pct);
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final id = msg['isolateId'] as String;
+          final last = lastSend[id] ?? 0;
+          if (now - last >= 100) {
+            lastSend[id] = now;
+            onProgress(
+                "Processando... $totalPagesDone/$totalPages | ${rate.toStringAsFixed(1)} pág/s | ETA ${etaSec}s",
+                pct);
+          }
         } else if (stage == 'merge-start') {
           onProgress("Mesclando partes...", null);
         } else if (stage == 'merge-done') {
+          // <<< PARTE QUE FALTAVA
           onProgress("Mesclagem concluída.", null);
         } else if (stage == 'merge-error') {
+          // <<< PARTE QUE FALTAVA
           onProgress("Erro na mesclagem: ${msg['error']}", null);
         }
       }
@@ -203,17 +234,10 @@ Future<String> compressPdfFile({
 
     String finalCompressedPath;
 
-    // --- Caminho 1: arquivo pequeno (sem split)
     if (totalPages < MIN_PAGES_FOR_SPLIT) {
-      if (isCancelRequested?.call() == true) {
-        _killAllRunning();
-        throw Exception('cancelled');
-      }
-
       onProgress("Processando (arquivo pequeno)...", null);
       final outPath = p.join(tmpRoot.path, '${_uuid.v4()}-compressed.pdf');
       tempFiles.add(outPath);
-
       final job = {
         'input': inputPath,
         'output': outPath,
@@ -224,42 +248,30 @@ Future<String> compressPdfFile({
         'send': progressPort.sendPort,
         'isolateId': 'main-iso',
       };
-
       final spawned = await _spawnCompressIsolate(job);
       running.add(spawned);
 
-      final res = await spawned.result;
-      if (isCancelRequested?.call() == true) {
-        _killAllRunning();
-        throw Exception('cancelled');
-      }
+      final res = await _waitForJobWithCancel(
+          spawned, isCancelRequested, _killAllRunning);
+
       if ((res['rc'] as int) < 0) throw Exception(res['error']);
       finalCompressedPath = res['finalPath'] as String;
-    }
-    // --- Caminho 2: arquivo grande (split + merge)
-    else {
+    } else {
       final cpus = (maxCores ?? Platform.numberOfProcessors)
           .clamp(1, MAX_ISOLATES_PER_PDF);
       final chunks = min(cpus, (totalPages / 2).ceil());
       final pagesPerChunk = (totalPages / chunks).ceil();
-
       onProgress("Dividindo em $chunks partes...", null);
 
       final outParts = <String>[];
       for (var i = 0; i < chunks; i++) {
-        if (isCancelRequested?.call() == true) {
-          _killAllRunning();
-          throw Exception('cancelled');
-        }
-
+        if (isCancelRequested?.call() == true) throw Exception('cancelled');
         final start = 1 + i * pagesPerChunk;
         final end = (i == chunks - 1) ? totalPages : start + pagesPerChunk - 1;
         if (start > end) break;
-
         final partPath = p.join(tmpRoot.path, '${_uuid.v4()}-part${i + 1}.pdf');
         tempFiles.add(partPath);
         outParts.add(partPath);
-
         final job = {
           'input': inputPath,
           'output': partPath,
@@ -270,48 +282,35 @@ Future<String> compressPdfFile({
           'send': progressPort.sendPort,
           'isolateId': 'iso${i + 1}',
         };
-
         final spawned = await _spawnCompressIsolate(job);
         running.add(spawned);
       }
 
-      // aguarda cada chunk (permite checar cancel entre awaits)
       for (final j in List<_SpawnedJob>.from(running)) {
-        if (isCancelRequested?.call() == true) {
-          _killAllRunning();
-          throw Exception('cancelled');
-        }
-        final r = await j.result;
+        final r =
+            await _waitForJobWithCancel(j, isCancelRequested, _killAllRunning);
         if ((r['rc'] as int) < 0) {
           _killAllRunning();
           throw Exception(r['error'] ?? 'Erro em um dos isolates.');
         }
       }
 
-      if (isCancelRequested?.call() == true) {
-        _killAllRunning();
-        throw Exception('cancelled');
-      }
+      if (isCancelRequested?.call() == true) throw Exception('cancelled');
 
       final mergedPath = p.join(tmpRoot.path, '${_uuid.v4()}-merged.pdf');
       tempFiles.add(mergedPath);
-
       await _mergeInIsolate(outParts, mergedPath, progressPort.sendPort);
       finalCompressedPath = mergedPath;
     }
 
-    // encerra escuta de progresso
     await sub.cancel();
     progressPort.close();
-
     onProgress("Finalizando...", 100);
 
     final originalDir = outputDir ?? p.dirname(inputPath);
     final originalFilename = p.basenameWithoutExtension(inputPath);
     final finalOutputPath =
         p.join(originalDir, '${originalFilename}_comprimido.pdf');
-
-// Mover e limpar em outro isolate com entrypoint top-level
     await _finalizeInIsolate(
       src: finalCompressedPath,
       dst: finalOutputPath,
@@ -320,16 +319,36 @@ Future<String> compressPdfFile({
 
     return finalOutputPath;
   } catch (e) {
-    _killAllRunning(); // garante matar em erro/cancelamento
-    for (final path in tempFiles) {
-      try {
-        await File(path).delete();
-      } catch (_) {}
+    _killAllRunning();
+    if (e.toString().contains('cancelled')) {
+      // Não propaga o erro de cancelamento, apenas encerra.
+    } else {
+      rethrow;
     }
-    rethrow;
+    return '';
   } finally {
     await sub?.cancel();
     progressPort?.close();
+  }
+}
+
+Future<Map<String, Object?>> _waitForJobWithCancel(
+  _SpawnedJob job,
+  bool Function()? isCancelRequested,
+  void Function() killAll,
+) async {
+  while (true) {
+    if (isCancelRequested?.call() == true) {
+      killAll();
+      throw Exception('cancelled');
+    }
+    try {
+      final result =
+          await job.result.timeout(const Duration(milliseconds: 600));
+      return result;
+    } on TimeoutException {
+      continue;
+    }
   }
 }
 
@@ -358,9 +377,7 @@ Future<void> _finalizeEntry(Map<String, Object?> m) async {
   final dst = m['dst'] as String;
   final temps = (m['temps'] as List).cast<String>();
   try {
-    // mover resultado
     await File(src).rename(dst);
-    // limpar temporários
     for (final t in temps) {
       try {
         await File(t).delete();
@@ -377,6 +394,7 @@ Future<_SpawnedJob> _spawnCompressIsolate(Map<String, Object?> job) async {
   final iso = await Isolate.spawn(
     _compressIsolateEntry,
     {'result': resultPort.sendPort, 'job': job},
+    errorsAreFatal: true,
   );
   final future = resultPort.first.then((v) {
     resultPort.close();
@@ -387,7 +405,7 @@ Future<_SpawnedJob> _spawnCompressIsolate(Map<String, Object?> job) async {
 
 void _mergeIsolateEntry(Map<String, Object?> m) async {
   final progress = m['send'] as SendPort?;
-  final result = m['result'] as SendPort; // <— use este!
+  final result = m['result'] as SendPort;
   final inputs = (m['inputs'] as List).cast<String>();
   final out = m['out'] as String;
 
@@ -398,10 +416,10 @@ void _mergeIsolateEntry(Map<String, Object?> m) async {
     final rc = qpdf.run(args, outputPath: out);
     if (rc != 0) throw qpdf_api.QpdfException(rc, "Falha ao mesclar PDFs");
     progress?.send({'stage': 'merge-done'});
-    result.send({'rc': rc}); // <— envia sucesso
+    result.send({'rc': rc});
   } catch (e, st) {
     progress?.send({'stage': 'merge-error', 'error': e.toString()});
-    result.send({'rc': -1, 'error': '$e\n$st'}); // <— envia erro
+    result.send({'rc': -1, 'error': '$e\n$st'});
   }
 }
 
@@ -411,12 +429,16 @@ Future<void> _mergeInIsolate(
   SendPort progress,
 ) async {
   final resPort = ReceivePort();
-  final iso = await Isolate.spawn(_mergeIsolateEntry, {
-    'inputs': inputs,
-    'out': out,
-    'send': progress,
-    'result': resPort.sendPort,
-  });
+  final iso = await Isolate.spawn(
+    _mergeIsolateEntry,
+    {
+      'inputs': inputs,
+      'out': out,
+      'send': progress,
+      'result': resPort.sendPort,
+    },
+    errorsAreFatal: true,
+  );
 
   try {
     final result = (await resPort.first as Map).cast<String, Object?>();
@@ -451,15 +473,12 @@ List<String> _gsArgs({
     '-dBATCH',
     '-dNOPAUSE',
     '-sDEVICE=pdfwrite',
+    //'-dNumRenderingThreads=1',
     '-o',
     output,
     if (first != null) '-dFirstPage=$first',
     if (last != null) '-dLastPage=$last',
     ...qualityArgs,
-
-    // --- PARÂMETROS ADICIONADOS/MODIFICADOS PARA FORÇAR A COMPRESSÃO ---
-
-    // 1. Assegura que as políticas de imagem sejam aplicadas
     '-dDetectDuplicateImages=true',
     '-dColorImageDownsampleType=/Average',
     '-dGrayImageDownsampleType=/Average',
@@ -467,26 +486,17 @@ List<String> _gsArgs({
     '-dDownsampleColorImages=true',
     '-dDownsampleGrayImages=true',
     '-dDownsampleMonoImages=true',
-
-    // 2. Define a resolução alvo
     '-dColorImageResolution=$dpi',
     '-dGrayImageResolution=$dpi',
     '-dMonoImageResolution=$dpi',
-
-    // 3. FORÇA a conversão para JPEG (a parte mais importante)
     '-sColorConversionStrategy=sRGB',
-    // '-sColorImageDict.jpeg_DCTEncode=true', // Força a compressão JPEG para imagens coloridas
-    //  '-sGrayImageDict.jpeg_DCTEncode=true', // Força a compressão JPEG para imagens em tons de cinza
     '-dAutoFilterColorImages=false',
     '-dColorImageFilter=/DCTEncode',
     '-dAutoFilterGrayImages=false',
     '-dGrayImageFilter=/DCTEncode',
-    '-dJPEGQ=75', // Qualidade JPEG (0-100, padrão é ~75)
+    '-dJPEGQ=75',
     '-dAntiAliasColorImages=false',
     '-dAntiAliasGrayImages=false',
-
-    // -----------------------------------------------------------------
-
     input,
   ];
 }

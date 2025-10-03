@@ -1,4 +1,6 @@
 // lib/src/libui.dart
+//https://github.com/libui-ng/libui-ng
+// ignore_for_file: constant_identifier_names
 
 import 'dart:ffi';
 import 'dart:io';

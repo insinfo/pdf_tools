@@ -14,7 +14,7 @@ import 'package:shelf/shelf_io.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:uuid/uuid.dart';
 
-import 'package:pdf_tools/src/ghostscript.dart' as gs_api;
+import 'package:pdf_tools/src/gs_stdio_/ghostscript.dart' as gs_api;
 import 'package:pdf_tools/src/mupdf.dart' as mupdf_api;
 import 'package:pdf_tools/src/qpdf.dart' as qpdf_api;
 

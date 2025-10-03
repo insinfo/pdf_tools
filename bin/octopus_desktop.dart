@@ -8,7 +8,7 @@ import 'package:pdf_tools/src/compress/compress_logic.dart' as logic;
 void main() async {
   LibUI.init();
 
-  final window = Window('Octopus PDF Compressor', 600, 420);
+  final window = Window('Octopus PDF', 600, 420);
   window.margined = true;
 
   final mainBox = VerticalBox();

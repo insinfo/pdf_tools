@@ -5,8 +5,13 @@ const int GS_ARG_ENCODING_UTF8 = 1;
 
 // --- callbacks nativos para set_stdio ---
 typedef gs_stdin_cb_native  = Int32 Function(Pointer<Void>, Pointer<Int8>, Int32);
+typedef gs_stdin_cb_native_dart  = int Function(Pointer<Void>, Pointer<Int8>, int);
+
 typedef gs_stdout_cb_native = Int32 Function(Pointer<Void>, Pointer<Int8>, Int32);
+typedef gs_stdout_cb_native_dart = int Function(Pointer<Void>, Pointer<Int8>, int);
+
 typedef gs_stderr_cb_native = Int32 Function(Pointer<Void>, Pointer<Int8>, Int32);
+typedef gs_stderr_cb_native_dart = int Function(Pointer<Void>, Pointer<Int8>, int);
 
 // --- funções nativas ---
 typedef _gsapi_new_instance_native      = Int32 Function(Pointer<Pointer<Void>>, Pointer<Void>);

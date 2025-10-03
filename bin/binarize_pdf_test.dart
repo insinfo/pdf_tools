@@ -8,7 +8,7 @@
 
 import 'dart:io';
 import 'package:path/path.dart' as p;
-import 'package:pdf_tools/src/ghostscript.dart';
+import 'package:pdf_tools/src/gs_stdio_/ghostscript.dart';
 
 void main(List<String> args) async {
   final o = _parseArgs(args);

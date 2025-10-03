@@ -16,12 +16,52 @@ dependencies:
   mime: any
   http_parser: any
 
+  win32: any
+
   dart_pdf:
     git:
       url: https://github.com/insinfo/insinfo_dart_pdf
       ref: 31.1.21 # branch name
    
 dev_dependencies:
+  ffigen: ^11.0.0
   http: ^1.1.0
   lints: ^5.0.0
   test: ^1.24.0
+  
+
+ffigen:
+  # Nome da classe que será gerada
+  name: NuklearBindings 
+  description: Bindings for the Nuklear immediate mode GUI library.
+  
+  # Arquivo de saída
+  output: 'lib/src/nuklear/nuklear_bindings.dart'
+
+  llvm-path:
+    - 'C:\LLVM'
+
+  # Cabeçalhos (Headers) a serem lidos
+  headers:
+    entry-points:
+      - 'native/nuklear.h'
+      - 'native/dart_utils.h'
+    include-directives:
+      - 'native/nuklear.h'
+      - 'native/dart_utils.h'
+
+  # Opções do compilador (MUITO IMPORTANTE para o Nuklear)
+  # Passamos as mesmas macros usou para compilar a DLL.
+  # Isso garante que o ffigen "veja" todas as structs e funções.
+  compiler-opts:
+    - '-DNK_INCLUDE_FIXED_TYPES'
+    - '-DNK_INCLUDE_STANDARD_IO'
+    - '-DNK_INCLUDE_STANDARD_VARARGS'
+    - '-DNK_INCLUDE_DEFAULT_ALLOCATOR'
+    - '-DNK_INCLUDE_VERTEX_BUFFER_OUTPUT'
+    - '-DNK_INCLUDE_FONT_BAKING'
+    - '-DNK_INCLUDE_DEFAULT_FONT'
+
+  # Adiciona comentários no topo do arquivo gerado para evitar avisos do linter
+  preamble: |
+    // ignore_for_file: camel_case_types, non_constant_identifier_names, unused_field, constant_identifier_names  

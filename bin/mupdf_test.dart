@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:pdf_tools/src/ghostscript.dart'; // Importe o novo wrapper do Ghostscript
+import 'package:pdf_tools/src/gs_stdio_/ghostscript.dart'; // Importe o novo wrapper do Ghostscript
 import 'package:pdf_tools/src/mupdf.dart';
 
 void main() {
