@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'package:pdf_tools/src/gs_stdio_/ghostscript.dart'; // Importe o novo wrapper do Ghostscript
-import 'package:pdf_tools/src/mupdf.dart';
+import 'package:pdf_tools/src/ghostscript/ghostscript.dart'; // Importe o novo wrapper do Ghostscript
+import 'package:pdf_tools/src/mupdf/mupdf.dart';
 
 void main() {
   final inputFile = r'C:\MyDartProjects\pdf_tools\pdfs\input\14_34074_Vol 5.pdf';

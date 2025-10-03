@@ -1,6 +1,6 @@
 // bin/main.dart
 import 'dart:io';
-import 'package:pdf_tools/src/gs_stdio_/ghostscript.dart';
+import 'package:pdf_tools/src/ghostscript/ghostscript.dart';
 
 void main() async {
   // 1) caminho da DLL (ajuste se estiver em outra pasta/versão)

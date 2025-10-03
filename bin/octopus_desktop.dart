@@ -1,10 +1,11 @@
+//C:\MyDartProjects\pdf_tools\bin\octopus_desktop.dart
 import 'dart:io';
 import 'dart:math';
 import 'package:path/path.dart' as p;
 
 import 'package:pdf_tools/src/libui/libui.dart';
 import 'package:pdf_tools/src/compress/compress_logic.dart' as logic;
-
+//flutter run -d windows
 void main() async {
   LibUI.init();
 

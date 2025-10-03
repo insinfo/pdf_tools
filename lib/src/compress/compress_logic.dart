@@ -9,9 +9,9 @@ import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 // Importe os bindings das suas ferramentas de linha de comando
-import 'package:pdf_tools/src/gs_stdio_/ghostscript.dart' as gs_api;
-import 'package:pdf_tools/src/mupdf.dart' as mupdf_api;
-import 'package:pdf_tools/src/qpdf.dart' as qpdf_api;
+import 'package:pdf_tools/src/ghostscript/ghostscript.dart' as gs_api;
+import 'package:pdf_tools/src/mupdf/mupdf.dart' as mupdf_api;
+import 'package:pdf_tools/src/qpdf/qpdf.dart' as qpdf_api;
 
 const MIN_PAGES_FOR_SPLIT = 4;
 const MAX_ISOLATES_PER_PDF = 2;
@@ -176,6 +176,7 @@ Future<String> compressPdfFile({
   ReceivePort? progressPort;
   StreamSubscription? sub;
 
+  // ignore: no_leading_underscores_for_local_identifiers
   void _killAllRunning() {
     for (final j in running) {
       j.iso.kill(priority: Isolate.immediate);

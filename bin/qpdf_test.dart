@@ -2,7 +2,7 @@
 
 import 'dart:io';
 
-import 'package:pdf_tools/src/qpdf.dart';
+import 'package:pdf_tools/src/qpdf/qpdf.dart';
 
 void _printUsage() {
   stderr.writeln('''
