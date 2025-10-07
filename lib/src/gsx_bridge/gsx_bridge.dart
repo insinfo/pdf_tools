@@ -1,6 +1,7 @@
 // gsx_bridge.dart
 // ignore_for_file: non_constant_identifier_names, curly_braces_in_flow_control_structures, camel_case_types
 
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
@@ -70,8 +71,42 @@ class _CallbackRegistry {
     final id = user.address;
     final cb = _progress[id];
     if (cb != null) {
-      cb(pageDone, totalPages, line == nullptr ? '' : line.toDartString());
+      cb(pageDone, totalPages, line == nullptr ? '' : toDartString(line));
     }
+  }
+
+  static String toDartString(Pointer<Utf8> p, {int? length}) {
+    _ensureNotNullptr(p, 'toDartString');
+    final codeUnits = p.cast<Uint8>();
+    if (length != null) {
+      RangeError.checkNotNegative(length, 'length');
+    } else {
+      length = _length(codeUnits);
+    }
+    var result = '';
+
+    try {
+      result = utf8.decode(codeUnits.asTypedList(length));
+    } on FormatException {
+      return '';
+    }
+
+    return result;
+  }
+
+  static void _ensureNotNullptr(Pointer<Utf8> p, String operation) {
+    if (p == nullptr) {
+      throw UnsupportedError(
+          "Operation '$operation' not allowed on a 'nullptr'.");
+    }
+  }
+
+  static int _length(Pointer<Uint8> codeUnits) {
+    var length = 0;
+    while (codeUnits[length] != 0) {
+      length++;
+    }
+    return length;
   }
 
   static void _fileTrampoline(
@@ -100,7 +135,8 @@ class _CallbackRegistry {
     return _fileCallable!.nativeFunction;
   }
 
-  static int register({ProgressCallback? onProgress, FileIterCallback? onFile}) {
+  static int register(
+      {ProgressCallback? onProgress, FileIterCallback? onFile}) {
     final id = _nextId++;
     if (onProgress != null) _progress[id] = onProgress;
     if (onFile != null) _file[id] = onFile;
@@ -113,8 +149,10 @@ class _CallbackRegistry {
   }
 
   static void closeAll() {
-    _progressCallable?.close(); _progressCallable = null;
-    _fileCallable?.close(); _fileCallable = null;
+    _progressCallable?.close();
+    _progressCallable = null;
+    _fileCallable?.close();
+    _fileCallable = null;
   }
 }
 
@@ -205,7 +243,8 @@ class GsxBridge {
     }
   }
 
-  int runArgsSync(
+  /// a verssão Sync não suporta o onProgress e nem cancel
+  int runArgsNativeSync(
     List<String> args, {
     ProgressCallback? onProgress,
     GsxCancelToken? cancel,
@@ -245,7 +284,8 @@ class GsxBridge {
     }
   }
 
-  int compressFileSync({
+  /// a verssão Sync não suporta o onProgress e nem cancel
+  int compressFileNativeSync({
     required String inputPath,
     required String outputPath,
     int dpi = 150,
@@ -344,7 +384,8 @@ class GsxBridge {
     }
   }
 
-  GsxJob compressFileAsync({
+  /// comprimime um PDF em um thread nativo
+  GsxJob compressFileNativeAsync({
     required String inputPath,
     required String outputPath,
     int dpi = 150,
@@ -365,6 +406,8 @@ class GsxBridge {
 
     final id = _CallbackRegistry.register(onProgress: onProgress);
     final user = Pointer<Void>.fromAddress(id);
+
+   
 
     try {
       final job = _b.api.gsx_compress_file_async(

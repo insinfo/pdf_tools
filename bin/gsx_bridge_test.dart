@@ -1,5 +1,5 @@
 // bin/gsx_bridge_test.dart
-// ignore_for_file: curly_braces_in_flow_control_structures
+// ignore_for_file: curly_braces_in_flow_control_structures, prefer_interpolation_to_compose_strings
 
 import 'dart:io';
 import 'dart:async';
@@ -7,7 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:pdf_tools/src/gsx_bridge/gsx_bridge.dart';
 import 'package:pdf_tools/src/gsx_bridge/gsx_bridge_bindings.dart';
 
-//dart run bin/gsx_bridge_test.dart --in "C:\MyDartProjects\pdf_tools\pdfs\input\14_34074_Vol 5.pdf"
+//dart run bin/gsx_bridge_test.dart --async --in "C:\MyDartProjects\pdf_tools\pdfs\input\14_34074_Vol 5.pdf"
 
 void printUsage([String? err]) {
   if (err != null) stderr.writeln('Erro: $err\n');
@@ -134,19 +134,29 @@ Future<int> main(List<String> argv) async {
   // Se precisar de um caminho específico: GsxBridge.open('C:/.../gsx_bridge.dll');
 
   // Progress printer
-  DateTime lastPrint = DateTime.fromMillisecondsSinceEpoch(0);
-  void onProgress(int page, int total, String line) {
-    final now = DateTime.now();
-    // limita prints
-    if (now.difference(lastPrint).inMilliseconds < 120) return;
-    lastPrint = now;
 
-    if (total > 0 && page > 0) {
-      stdout.write(
-          '\rProgresso: página $page/$total  ${line.padRight(50).substring(0, 50)}');
+  void onProgress(int page, int total, String line) {
+    // Constrói a string de progresso de forma robusta
+    String progressMessage;
+    if (page > 0) {
+      if (total > 0) {
+        // Caso ideal: sabemos o total
+        final percent = (page / total * 100).toStringAsFixed(1);
+        progressMessage = 'Progresso: $percent% (página $page de $total)';
+      } else {
+        // Caso comum: não sabemos o total, mas sabemos a página atual
+        progressMessage = 'Progresso: Processando página $page...';
+      }
+    } else if (line.trim().isNotEmpty) {
+      // Mostra a linha de log inicial, mas corta para não ser muito longa
+      progressMessage = line.length > 70 ? line.substring(0, 67) + '...' : line;
     } else {
-      stdout.write('\r${line.padRight(72).substring(0, 72)}');
+      return; // Ignora linhas vazias
     }
+
+    // Limpa a linha e escreve a mensagem
+    // O 'padRight' garante que a linha anterior seja completamente apagada
+    stdout.write('\r${progressMessage.padRight(72)}');
   }
 
   // Ctrl+C -> cancel
@@ -212,7 +222,7 @@ Future<int> main(List<String> argv) async {
 
       if (useAsync) {
         stdout.writeln('Executando assíncrono…');
-        final job = bridge.compressFileAsync(
+        final job = bridge.compressFileNativeAsync(
           inputPath: input,
           outputPath: output,
           dpi: dpi,
@@ -234,7 +244,7 @@ Future<int> main(List<String> argv) async {
         }
       } else {
         stdout.writeln('Executando síncrono…');
-        rc = bridge.compressFileSync(
+        rc = bridge.compressFileNativeSync(
           inputPath: input,
           outputPath: output,
           dpi: dpi,
