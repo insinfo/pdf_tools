@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdf_tools/src/compress/compress_logic2.dart' as logic;
 import 'package:window_manager/window_manager.dart';
+// ignore: unused_import
 import 'package:flutter_svg/flutter_svg.dart';
 
 void main() async {
@@ -38,7 +39,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Octopus PDF',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
         useMaterial3: true,
         scaffoldBackgroundColor: Colors.grey[50],
       ),
@@ -404,7 +405,8 @@ class _MyHomePageState extends State<MyHomePage> {
           backgroundColor: Theme.of(context).colorScheme.inversePrimary,
           title: Row(
             children: [
-              SvgPicture.asset('assets/logo_octopus_pdf.svg', height: 65),
+              SvgPicture.asset('assets/logo_octopus.svg', height: 65),
+             //Image.asset('assets/logo_octopus_color.png', height: 65),
               const SizedBox(width: 10),
               // 2. Coluna com Título e Subtítulo
               Column(

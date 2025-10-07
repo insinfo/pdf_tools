@@ -17,21 +17,19 @@ dependencies:
     path: ../
   window_manager: ^0.5.1
   flutter_svg: ^2.2.1
+  flutter_launcher_icons: ^0.14.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
  
   flutter_lints: ^5.0.0
   
-
-
 flutter:
   uses-material-design: true
   assets:
-     - assets/logo_octopus_pdf.svg
-  #   - images/a_dot_ham.jpeg  
+    - assets/logo_octopus.svg
+    - assets/logo_octopus_color.png
   # fonts:
   #   - family: Schyler
   #     fonts:
@@ -44,3 +42,15 @@ flutter:
   #       - asset: fonts/TrajanPro_Bold.ttf
   #         weight: 700
   #
+
+flutter_launcher_icons:  
+  # android: true
+  # ios: true  
+  image_path: "assets/logo_octopus_color.png"
+  windows:
+    generate: true
+    image_path: "assets/logo_octopus_color.png"
+    icon_size: 256 
+  # macos:
+  #   generate: true
+  #   image_path: "assets/icon.png"
