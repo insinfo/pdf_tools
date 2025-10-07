@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdf_tools/src/compress/compress_logic2.dart' as logic;
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,7 +42,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: Colors.grey[50],
       ),
-      home: const MyHomePage(title: 'Octopus PDF Tools 🐙'),
+      home: const MyHomePage(title: 'Octopus PDF Tools'),
       debugShowCheckedModeBanner: false,
     );
   }
@@ -398,8 +399,27 @@ class _MyHomePageState extends State<MyHomePage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(widget.title),
-          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,         
+          title: Row(
+            children: [             
+              SvgPicture.asset(
+                'assets/logo_octopus_pdf.svg', 
+                height: 65, 
+              ),
+              const SizedBox(width: 10), 
+              // 2. Coluna com Título e Subtítulo
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(widget.title),
+                  const Text(
+                    'Construído na PMRO',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
         body: Column(
           children: [
@@ -672,7 +692,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       ? Colors.red.shade700
                       : Theme.of(context).colorScheme.primary,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.all(10),
                   textStyle: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
