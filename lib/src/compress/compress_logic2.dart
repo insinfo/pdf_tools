@@ -195,6 +195,7 @@ Future<String> compressPdfFile({
   required int firstPage,
   required int lastPage,
   required int maxIsolatesPerPdf,
+  required bool linearize,
   required ProgressCallback onProgress,
   String? outputDir,
   bool Function()? isCancelRequested,
@@ -381,12 +382,40 @@ Future<String> compressPdfFile({
     progressPort.close();
     onProgress("Finalizando...", 100);
 
+    //  Lógica de linearização
+    String pathBeforeFinalize = finalCompressedPath;
+
+    if (linearize) {
+      if (isCancelRequested?.call() == true) {
+        throw Exception('cancelled');
+      }
+      onProgress("Linearizando PDF para visualização rápida...", 100);
+      onLog?.call("Executando qpdf --linearize...");
+
+      final linearizedPath =
+          p.join(tmpRoot.path, '${_uuid.v4()}-linearized.pdf');
+      // Importante para a limpeza posterior
+      tempFiles.add(linearizedPath);
+
+      final qpdf = qpdf_api.Qpdf.open();
+      // A sintaxe comum é: qpdf [opções] <arquivo-entrada> <arquivo-saida>
+      final rc = qpdf.run(['--linearize', finalCompressedPath, linearizedPath]);
+
+      if (rc != 0) {
+        throw qpdf_api.QpdfException(rc, "Falha ao linearizar PDF final.");
+      }
+      onLog?.call("Linearização concluída.");
+      pathBeforeFinalize = linearizedPath;
+    }
+    //
+
     final originalDir = outputDir ?? p.dirname(inputPath);
     final originalFilename = p.basenameWithoutExtension(inputPath);
     final finalOutputPath =
         p.join(originalDir, '${originalFilename}_comprimido.pdf');
+
     await _finalizeInIsolate(
-      src: finalCompressedPath,
+      src: pathBeforeFinalize, // <-- ALTERADO: Use a nova variável
       dst: finalOutputPath,
       temps: tempFiles,
     );

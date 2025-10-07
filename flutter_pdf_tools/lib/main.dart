@@ -57,22 +57,23 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  // --- Estado da Aplicação ---
+  //  Estado da Aplicação
   final List<String> _filesToProcess = [];
   String _outputDir = '';
   bool _isProcessing = false;
   bool _cancelRequested = false;
 
-  // --- Estado das Opções ---
+  //  Estado das Opções
   String _selectedQuality = 'default';
   String _selectedColorMode = 'color';
-  final _dpiController = TextEditingController(text: '150');
+  final _dpiController = TextEditingController(text: '120');
   final _jpegQualityController = TextEditingController(text: '75');
   final _firstPageController = TextEditingController();
   final _lastPageController = TextEditingController();
   final _coresController = TextEditingController(text: '1');
+  bool _linearizePdf = true;
 
-  // --- Estado do Progresso ---
+  //  Estado do Progresso
   String _progressMessage = '';
   double? _progressValue;
 
@@ -87,7 +88,7 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
-  // --- Console de Log (buffer circular) ---
+  //  Console de Log (buffer circular)
   static const int _kLogMax = 5000;
   static const int _kTrimChunk = 500; // corta 10% quando ultrapassar
   final List<String> _log = <String>[];
@@ -264,6 +265,7 @@ class _MyHomePageState extends State<MyHomePage> {
           lastPage: lastPage,
           maxIsolatesPerPdf: maxCores,
           outputDir: _outputDir,
+          linearize: _linearizePdf,
           isCancelRequested: () => _cancelRequested,
           // 1) Progresso "amigável" (mantém barra e status)
           onProgress: (message, percentage) {
@@ -399,14 +401,11 @@ class _MyHomePageState extends State<MyHomePage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          backgroundColor: Theme.of(context).colorScheme.inversePrimary,         
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
           title: Row(
-            children: [             
-              SvgPicture.asset(
-                'assets/logo_octopus_pdf.svg', 
-                height: 65, 
-              ),
-              const SizedBox(width: 10), 
+            children: [
+              SvgPicture.asset('assets/logo_octopus_pdf.svg', height: 65),
+              const SizedBox(width: 10),
               // 2. Coluna com Título e Subtítulo
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -423,7 +422,7 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
         body: Column(
           children: [
-            // ---- conteúdo rolável (bloqueado enquanto processa) ----
+            // - conteúdo rolável (bloqueado enquanto processa) -
             Expanded(
               child: AbsorbPointer(
                 absorbing: _isProcessing,
@@ -557,6 +556,19 @@ class _MyHomePageState extends State<MyHomePage> {
                               controller: _coresController,
                             ),
                           ),
+                          SwitchListTile(
+                            title: const Text('Otimizar para Web (Linearizar)'),
+                            subtitle: const Text(
+                              'Permite visualização mais rápida online.',
+                            ),
+                            value: _linearizePdf,
+                            onChanged: (bool value) {
+                              setState(() {
+                                _linearizePdf = value;
+                              });
+                            },
+                            contentPadding: EdgeInsets.zero,
+                          ),
                         ],
                       ),
                       _buildSectionCard(
@@ -590,7 +602,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         ],
                       ),
 
-                      // ---- CONSOLE (opcional) ----
+                      // - CONSOLE (opcional) -
                       _buildSectionCard(
                         title: 'Console (opcional)',
                         children: [
@@ -673,7 +685,7 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
 
-            // ---- rodapé fixo: progresso + botão (fora do AbsorbPointer) ----
+            // - rodapé fixo: progresso + botão (fora do AbsorbPointer) -
             if (_isProcessing || _progressMessage.isNotEmpty) ...[
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
