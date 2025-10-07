@@ -43,7 +43,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: Colors.grey[50],
       ),
-      home: const MyHomePage(title: 'Octopus PDF Tools'),
+      home: const MyHomePage(title: 'Octopus PDF'),
       debugShowCheckedModeBanner: false,
     );
   }
@@ -706,7 +706,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       ? Colors.red.shade700
                       : Theme.of(context).colorScheme.primary,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.fromLTRB(20,10,20,10),
                   textStyle: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -736,7 +736,7 @@ class _MyHomePageState extends State<MyHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
             const Divider(height: 24),
             ...children,
           ],
