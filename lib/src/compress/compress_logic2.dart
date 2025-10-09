@@ -201,8 +201,16 @@ Future<String> compressPdfFile({
   bool Function()? isCancelRequested,
   LogCallback? onLog, // <-- NOVO: callback para cada linha do Ghostscript
 }) async {
-  final tmpRoot =
-      Directory(p.join(Directory.systemTemp.path, 'pdf_compressor_desktop'));
+  // final tmpRoot =
+  //     Directory(p.join(Directory.systemTemp.path, 'pdf_compressor_desktop'));
+  // await tmpRoot.create(recursive: true);
+
+  // Escolhe uma base para o temporário no MESMO volume do destino (ou do input)
+  final baseForTemp = (outputDir != null && outputDir.isNotEmpty)
+      ? outputDir
+      : p.dirname(inputPath);
+// mantemos um subpasta "oculta" para facilitar limpeza
+  final tmpRoot = Directory(p.join(baseForTemp, '.octopus_tmp'));
   await tmpRoot.create(recursive: true);
 
   final List<String> tempFiles = [];
@@ -470,18 +478,83 @@ Future<void> _finalizeInIsolate({
   }
 }
 
+// Future<void> _finalizeEntry(Map<String, Object?> m) async {
+//   final send = m['result'] as SendPort;
+//   final src = m['src'] as String;
+//   final dst = m['dst'] as String;
+//   final temps = (m['temps'] as List).cast<String>();
+//   try {
+//     await File(src).rename(dst);
+//     for (final t in temps) {
+//       try {
+//         await File(t).delete();
+//       } catch (_) {}
+//     }
+//     send.send({'rc': 0});
+//   } catch (e, st) {
+//     send.send({'rc': -1, 'error': '$e\n$st'});
+//   }
+// }
+
 Future<void> _finalizeEntry(Map<String, Object?> m) async {
   final send = m['result'] as SendPort;
   final src = m['src'] as String;
   final dst = m['dst'] as String;
   final temps = (m['temps'] as List).cast<String>();
+
+  Future<void> safeDelete(String path) async {
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+
   try {
-    await File(src).rename(dst);
-    for (final t in temps) {
-      try {
-        await File(t).delete();
-      } catch (_) {}
+    final dstFile = File(dst);
+    final dstDir = dstFile.parent;
+    if (!await dstDir.exists()) {
+      await dstDir.create(recursive: true);
     }
+
+    // Se já existir, apaga para simular "replace"
+    if (await dstFile.exists()) {
+      await dstFile.delete();
+    }
+
+    // 1) Tenta rename (atômico e muito mais rápido quando é o MESMO volume)
+    try {
+      await File(src).rename(dst);
+    } on FileSystemException catch (e) {
+      // errno 17 (EXDEV) => cross-device; cai para cópia por stream
+      final isCrossDevice = e.osError?.errorCode == 17 /* EXDEV */ ||
+          (e.message.contains('different device') ||
+              e.osError?.message.contains('unidade de disco diferente') ==
+                  true);
+
+      if (!isCrossDevice) rethrow;
+
+      // 2) Cross-device: copia por stream (sem estourar memória) e apaga o src
+      final inF = File(src).openRead();
+      final outS = dstFile.openWrite();
+      await inF.pipe(outS);
+      await outS.close();
+      await safeDelete(src);
+    }
+
+    // Limpa temporários
+    for (final t in temps) {
+      await safeDelete(t);
+    }
+
+    // Se criamos a pasta .octopus_tmp dentro do destino, tente removê-la se ficou vazia
+    try {
+      final tmpDir = Directory(p.join(dstDir.path, '.octopus_tmp'));
+      if (await tmpDir.exists()) {
+        // remove apenas se vazia
+        await tmpDir.delete(recursive: false);
+      }
+    } catch (_) {}
+
     send.send({'rc': 0});
   } catch (e, st) {
     send.send({'rc': -1, 'error': '$e\n$st'});

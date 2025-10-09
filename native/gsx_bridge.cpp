@@ -1,5 +1,11 @@
 // gsx_bridge.cpp — Versão Completa com Correção de Qualidade JPEG e Debug Log
 
+// compilar com 
+// C:\Program Files\gs\ghostpdl-10.06.0\psi\iapi.h
+// C:\Program Files\gs\gs10.06.0\bin\gsdll64.lib
+// cl /LD /O2 /EHsc /std:c++17 /MD /I"C:\Program Files\gs\ghostpdl-10.06.0\psi" gsx_bridge.cpp /link /OUT:gsx_bridge.dll /MACHINE:X64 /LIBPATH:"C:\Program Files\gs\gs10.06.0\bin" gsdll64.lib
+//
+
 #include <atomic>
 #include <string>
 #include <vector>
@@ -18,10 +24,6 @@
 #include <locale>
 #include <ctime>
 #include <cerrno>
-
-
-
-
 
 namespace fs = std::filesystem;
 
@@ -177,7 +179,7 @@ static void _append_debug_per_line(const char* prefix, const char* data, int len
   }
 }
 
-// ======================= Logging e Erros (Sem alterações) =======================
+// ======================= Logging e Erros  =======================
 static std::mutex g_log_mtx;
 static gsx_log_cb g_log_cb = nullptr;
 static void* g_log_user = nullptr;

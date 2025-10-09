@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "flutter_pdf_tools" "\0"
+            VALUE "CompanyName", "PMRO" "\0"
+            VALUE "FileDescription", "Octopus PDF" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "flutter_pdf_tools" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "flutter_pdf_tools.exe" "\0"
-            VALUE "ProductName", "flutter_pdf_tools" "\0"
+            VALUE "InternalName", "octopus" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2025 PMRO. All rights reserved." "\0"
+            VALUE "OriginalFilename", "octopus.exe" "\0"
+            VALUE "ProductName", "Octopus PDF" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
